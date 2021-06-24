@@ -15,8 +15,10 @@
     <dimen name="icon_width">72dp</dimen>
     <dimen name="fab_margin">16dp</dimen>
     <dimen name="fab_height">56dp</dimen>
+    <dimen name="sixty_four">64dp</dimen>
     <dimen name="minimal_row_height">100dp</dimen>
     <dimen name="minimal_row_size">72dp</dimen>
+    <dimen name="drag_icon_size">144dp</dimen>
     <dimen name="minimal_icon_size">40dp</dimen>
     <dimen name="minimal_icon_parent_width">56dp</dimen>
     <dimen name="tick_icon_size">20dp</dimen>
@@ -37,12 +39,16 @@
 
     <dimen name="material_sheet_row_height_title">56dp</dimen>
     <dimen name="material_sheet_row_height_content">48dp</dimen>
+    <dimen name="material_sheet_height">500dp</dimen>
+    <dimen name="material_sheet_peek_height">400dp</dimen>
+    <dimen name="material_sheet_listview_height">300dp</dimen>
     <dimen name="height_divider">1dp</dimen>
 
     <dimen name="spacebetweenitems_properties_dialog">10dp</dimen>
 
     <dimen name="list_header_height">48dp</dimen>
     <dimen name="list_header_textsize">16sp</dimen>
+    <dimen name="text_size_22sp">22sp</dimen>
 
     <!-- Copy value from material-dialogs library -->
     <dimen name="md_dialog_frame_margin">24dp</dimen>

@@ -20,6 +20,9 @@
 
 package com.amaze.filemanager.filesystem.compressed;
 
+import static android.os.Build.VERSION_CODES.JELLY_BEAN;
+import static android.os.Build.VERSION_CODES.KITKAT;
+import static android.os.Build.VERSION_CODES.P;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -37,6 +40,7 @@ import org.robolectric.shadows.ShadowToast;
 import com.amaze.filemanager.R;
 import com.amaze.filemanager.adapters.data.CompressedObjectParcelable;
 import com.amaze.filemanager.asynchronous.asynctasks.compress.ZipHelperTask;
+import com.amaze.filemanager.asynchronous.management.ServiceWatcherUtil;
 import com.amaze.filemanager.filesystem.compressed.extractcontents.Extractor;
 import com.amaze.filemanager.filesystem.compressed.extractcontents.helpers.ZipExtractor;
 import com.amaze.filemanager.shadows.ShadowMultiDex;
@@ -47,7 +51,9 @@ import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 @RunWith(AndroidJUnit4.class)
-@Config(shadows = {ShadowMultiDex.class})
+@Config(
+    shadows = {ShadowMultiDex.class},
+    sdk = {JELLY_BEAN, KITKAT, P})
 public class B0rkenZipTest {
 
   private File zipfile1 = new File(Environment.getExternalStorageDirectory(), "zip-slip.zip");
@@ -93,7 +99,8 @@ public class B0rkenZipTest {
             ApplicationProvider.getApplicationContext(),
             zipfile1.getAbsolutePath(),
             Environment.getExternalStorageDirectory().getAbsolutePath(),
-            emptyListener);
+            emptyListener,
+            ServiceWatcherUtil.UPDATE_POSITION);
     extractor.extractEverything();
     assertEquals(1, extractor.getInvalidArchiveEntries().size());
     assertTrue(new File(Environment.getExternalStorageDirectory(), "good.txt").exists());
@@ -106,7 +113,8 @@ public class B0rkenZipTest {
             ApplicationProvider.getApplicationContext(),
             zipfile2.getAbsolutePath(),
             Environment.getExternalStorageDirectory().getAbsolutePath(),
-            emptyListener);
+            emptyListener,
+            ServiceWatcherUtil.UPDATE_POSITION);
     extractor.extractEverything();
     assertEquals(1, extractor.getInvalidArchiveEntries().size());
     assertTrue(new File(Environment.getExternalStorageDirectory(), "good.txt").exists());
@@ -119,7 +127,8 @@ public class B0rkenZipTest {
             ApplicationProvider.getApplicationContext(),
             zipfile3.getAbsolutePath(),
             Environment.getExternalStorageDirectory().getAbsolutePath(),
-            emptyListener);
+            emptyListener,
+            ServiceWatcherUtil.UPDATE_POSITION);
     extractor.extractFiles(new String[] {"/test.txt"});
     assertEquals(0, extractor.getInvalidArchiveEntries().size());
     assertTrue(new File(Environment.getExternalStorageDirectory(), "test.txt").exists());

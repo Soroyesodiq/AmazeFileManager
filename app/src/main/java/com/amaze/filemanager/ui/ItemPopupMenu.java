@@ -43,11 +43,12 @@ import com.amaze.filemanager.utils.DataUtils;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.preference.PreferenceManager;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.PopupMenu;
 import android.widget.Toast;
+
+import androidx.preference.PreferenceManager;
 
 /**
  * This class contains the functionality of the PopupMenu for each file in the MainFragment
@@ -164,7 +165,7 @@ public class ItemPopupMenu extends PopupMenu implements PopupMenu.OnMenuItemClic
       case R.id.open_with:
         boolean useNewStack =
             sharedPrefs.getBoolean(PreferencesConstants.PREFERENCE_TEXTEDITOR_NEWSTACK, false);
-        FileUtils.openWith(new File(rowItem.desc), mainFragment.getActivity(), useNewStack);
+        FileUtils.openWith(new File(rowItem.desc), mainActivity, useNewStack);
         return true;
       case R.id.encrypt:
         final Intent encryptIntent = new Intent(context, EncryptService.class);
@@ -256,7 +257,7 @@ public class ItemPopupMenu extends PopupMenu implements PopupMenu.OnMenuItemClic
             context,
             mainActivity,
             mainFragment,
-            mainFragment.openMode,
+            mainFragment.getMainFragmentViewModel().getOpenMode(),
             rowItem.generateBaseFile(),
             rowItem.generateBaseFile().getParent(context),
             utilitiesProvider,

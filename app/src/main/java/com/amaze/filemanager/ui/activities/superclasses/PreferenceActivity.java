@@ -26,6 +26,7 @@ import static com.amaze.filemanager.ui.fragments.preference_fragments.Preference
 import static com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants.PREFERENCE_COLORIZE_ICONS;
 import static com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants.PREFERENCE_NEED_TO_SET_HOME;
 import static com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants.PREFERENCE_ROOTMODE;
+import static com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants.PREFERENCE_ROOT_LEGACY_LISTING;
 import static com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants.PREFERENCE_SHOW_DIVIDERS;
 import static com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants.PREFERENCE_SHOW_FILE_SIZE;
 import static com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants.PREFERENCE_SHOW_GOBACK_BUTTON;
@@ -40,9 +41,13 @@ import static com.amaze.filemanager.ui.fragments.preference_fragments.Preference
 import static com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants.PREFERENCE_USE_CIRCULAR_IMAGES;
 import static com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants.PREFERENCE_VIEW;
 
+import com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants;
+import com.amaze.filemanager.utils.PreferenceUtils;
+
 import android.content.SharedPreferences;
 import android.os.Bundle;
-import android.preference.PreferenceManager;
+
+import androidx.preference.PreferenceManager;
 
 /** @author Emmanuel on 24/8/2017, at 23:13. */
 public class PreferenceActivity extends BasicActivity {
@@ -64,6 +69,11 @@ public class PreferenceActivity extends BasicActivity {
     return getBoolean(PREFERENCE_ROOTMODE);
   }
 
+  public int getCurrentTab() {
+    return getPrefs()
+        .getInt(PreferencesConstants.PREFERENCE_CURRENT_TAB, PreferenceUtils.DEFAULT_CURRENT_TAB);
+  }
+
   public boolean getBoolean(String key) {
     boolean defaultValue;
 
@@ -76,6 +86,7 @@ public class PreferenceActivity extends BasicActivity {
       case PREFERENCE_COLORED_NAVIGATION:
       case PREFERENCE_TEXTEDITOR_NEWSTACK:
       case PREFERENCE_CHANGEPATHS:
+      case PREFERENCE_ROOT_LEGACY_LISTING:
         defaultValue = false;
         break;
       case PREFERENCE_SHOW_FILE_SIZE:

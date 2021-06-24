@@ -33,6 +33,7 @@ import static com.amaze.filemanager.ui.fragments.preference_fragments.Preference
 import java.util.ArrayList;
 import java.util.List;
 
+import com.amaze.filemanager.GlideApp;
 import com.amaze.filemanager.R;
 import com.amaze.filemanager.adapters.data.IconDataParcelable;
 import com.amaze.filemanager.adapters.data.LayoutElementParcelable;
@@ -41,10 +42,12 @@ import com.amaze.filemanager.adapters.glide.RecyclerPreloadSizeProvider;
 import com.amaze.filemanager.adapters.holders.EmptyViewHolder;
 import com.amaze.filemanager.adapters.holders.ItemViewHolder;
 import com.amaze.filemanager.adapters.holders.SpecialViewHolder;
+import com.amaze.filemanager.application.AppConfig;
 import com.amaze.filemanager.filesystem.files.CryptUtil;
 import com.amaze.filemanager.ui.ItemPopupMenu;
 import com.amaze.filemanager.ui.activities.superclasses.PreferenceActivity;
 import com.amaze.filemanager.ui.colors.ColorUtils;
+import com.amaze.filemanager.ui.drag.RecyclerAdapterDragListener;
 import com.amaze.filemanager.ui.fragments.MainFragment;
 import com.amaze.filemanager.ui.fragments.preference_fragments.PreferencesConstants;
 import com.amaze.filemanager.ui.icons.Icons;
@@ -52,11 +55,9 @@ import com.amaze.filemanager.ui.icons.MimeTypes;
 import com.amaze.filemanager.ui.provider.UtilitiesProvider;
 import com.amaze.filemanager.ui.theme.AppTheme;
 import com.amaze.filemanager.ui.views.CircleGradientDrawable;
-import com.amaze.filemanager.ui.views.RoundedImageView;
 import com.amaze.filemanager.utils.AnimUtils;
 import com.amaze.filemanager.utils.GlideConstants;
 import com.amaze.filemanager.utils.Utils;
-import com.bumptech.glide.Glide;
 import com.bumptech.glide.integration.recyclerview.RecyclerViewPreloader;
 import com.bumptech.glide.load.DataSource;
 import com.bumptech.glide.load.engine.GlideException;
@@ -72,6 +73,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -79,6 +81,7 @@ import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 import android.widget.ImageView;
 import android.widget.PopupMenu;
+import android.widget.TextView;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
@@ -102,10 +105,6 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
       TYPE_HEADER_FILES = 2,
       EMPTY_LAST_ITEM = 3,
       TYPE_BACK = 4;
-
-  @IntDef({TYPE_ITEM, TYPE_HEADER_FOLDERS, TYPE_HEADER_FILES, EMPTY_LAST_ITEM, TYPE_BACK})
-  public @interface ListElemType {}
-
   private static final int VIEW_GENERIC = 0, VIEW_PICTURE = 1, VIEW_APK = 2, VIEW_THUMB = 3;
 
   public boolean stoppedAnimation = false;
@@ -134,6 +133,9 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
       genericColor,
       apkColor;
   private int offset = 0;
+  private boolean enableMarquee;
+  private int dragAndDropPreference;
+  private boolean isGrid;
 
   public RecyclerAdapter(
       PreferenceActivity preferenceActivity,
@@ -142,7 +144,8 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
       SharedPreferences sharedPrefs,
       RecyclerView recyclerView,
       ArrayList<LayoutElementParcelable> itemsRaw,
-      Context context) {
+      Context context,
+      boolean isGrid) {
     setHasStableIds(true);
 
     this.preferenceActivity = preferenceActivity;
@@ -150,10 +153,17 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
     this.utilsProvider = utilsProvider;
     this.context = context;
     this.sharedPrefs = sharedPrefs;
+    this.enableMarquee =
+        sharedPrefs.getBoolean(PreferencesConstants.PREFERENCE_ENABLE_MARQUEE_FILENAME, true);
+    this.dragAndDropPreference =
+        sharedPrefs.getInt(
+            PreferencesConstants.PREFERENCE_DRAG_AND_DROP_PREFERENCE,
+            PreferencesConstants.PREFERENCE_DRAG_TO_SELECT);
+    this.isGrid = isGrid;
 
     mInflater = (LayoutInflater) context.getSystemService(Activity.LAYOUT_INFLATER_SERVICE);
     accentColor = m.getMainActivity().getAccent();
-    iconSkinColor = m.getMainActivity().getCurrentColorPreference().iconSkin;
+    iconSkinColor = m.getMainActivity().getCurrentColorPreference().getIconSkin();
     goBackColor = Utils.getColor(context, R.color.goback_item);
     videoColor = Utils.getColor(context, R.color.video_item);
     audioColor = Utils.getColor(context, R.color.audio_item);
@@ -176,6 +186,11 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
    * @param imageView the check {@link CircleGradientDrawable} that is to be animated
    */
   public void toggleChecked(int position, ImageView imageView) {
+    if (itemsDigested.size() <= position || position < 0) {
+      AppConfig.toast(context, R.string.operation_not_supported);
+      return;
+    }
+
     if (itemsDigested.get(position).getChecked() == ListItem.UNCHECKABLE) {
       throw new IllegalArgumentException("You have checked a header");
     }
@@ -183,42 +198,58 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
     if (!stoppedAnimation) mainFrag.stopAnimation();
     if (itemsDigested.get(position).getChecked() == ListItem.CHECKED) {
       // if the view at position is checked, un-check it
+      Log.d(
+          getClass().getSimpleName(),
+          String.format("the view at position %s is checked, un-check it", position));
       itemsDigested.get(position).setChecked(false);
 
       Animation iconAnimation = AnimationUtils.loadAnimation(context, R.anim.check_out);
       if (imageView != null) {
+        imageView.clearAnimation();
         imageView.startAnimation(iconAnimation);
       } else {
         // TODO: we don't have the check icon object probably because of config change
       }
     } else {
       // if view is un-checked, check it
+      Log.d(
+          getClass().getSimpleName(),
+          String.format("the view at position %s is unchecked, check it", position));
       itemsDigested.get(position).setChecked(true);
 
       Animation iconAnimation = AnimationUtils.loadAnimation(context, R.anim.check_in);
       if (imageView != null) {
+        imageView.clearAnimation();
         imageView.startAnimation(iconAnimation);
       } else {
         // TODO: we don't have the check icon object probably because of config change
       }
-      if (mainFrag.mActionMode == null || !mainFrag.selection) {
+      if (mainFrag.mActionMode == null
+          || (mainFrag.getMainFragmentViewModel() != null
+              && !mainFrag.getMainFragmentViewModel().getSelection())) {
         // start actionmode if not already started
         // null condition if there is config change
-        mainFrag.selection = true;
+        if (mainFrag.getMainFragmentViewModel() != null) {
+          mainFrag.getMainFragmentViewModel().setSelection(true);
+        }
         mainFrag.mActionMode =
             mainFrag.getMainActivity().startSupportActionMode(mainFrag.mActionModeCallback);
       }
     }
 
     notifyItemChanged(position);
-    if (mainFrag.mActionMode != null && mainFrag.selection) {
+    invalidateActionMode();
+  }
+
+  public void invalidateActionMode() {
+    if (mainFrag.mActionMode != null
+        && mainFrag.getMainFragmentViewModel() != null
+        && mainFrag.getMainFragmentViewModel().getSelection()) {
       // we have the actionmode visible, invalidate it's views
       mainFrag.mActionMode.invalidate();
     }
     if (getCheckedItems().size() == 0) {
-      mainFrag.selection = false;
-      mainFrag.mActionMode.finish();
-      mainFrag.mActionMode = null;
+      mainFrag.disableActionMode();
     }
   }
 
@@ -235,18 +266,7 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
         notifyItemChanged(i);
       }
     }
-
-    if (mainFrag.mActionMode != null) {
-      mainFrag.mActionMode.invalidate();
-    }
-
-    if (getCheckedItems().size() == 0) {
-      mainFrag.selection = false;
-      if (mainFrag.mActionMode != null) {
-        mainFrag.mActionMode.finish();
-      }
-      mainFrag.mActionMode = null;
-    }
+    invalidateActionMode();
   }
 
   /**
@@ -265,16 +285,7 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
         notifyItemChanged(i);
       }
     }
-
-    if (mainFrag.mActionMode != null) {
-      mainFrag.mActionMode.invalidate();
-    }
-
-    if (getCheckedItems().size() == 0) {
-      mainFrag.selection = false;
-      if (mainFrag.mActionMode != null) mainFrag.mActionMode.finish();
-      mainFrag.mActionMode = null;
-    }
+    invalidateActionMode();
   }
 
   public ArrayList<LayoutElementParcelable> getCheckedItems() {
@@ -287,6 +298,10 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
     }
 
     return selected;
+  }
+
+  public ArrayList<ListItem> getItemsDigested() {
+    return itemsDigested;
   }
 
   public boolean areAllChecked(String path) {
@@ -319,6 +334,9 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
     if (holder instanceof ItemViewHolder) {
       ((ItemViewHolder) holder).rl.clearAnimation();
       ((ItemViewHolder) holder).txtTitle.setSelected(false);
+      if (dragAndDropPreference != PreferencesConstants.PREFERENCE_DRAG_DEFAULT) {
+        ((ItemViewHolder) holder).rl.setOnDragListener(null);
+      }
     }
     super.onViewDetachedFromWindow(holder);
   }
@@ -354,9 +372,13 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
    * adapter, after you are finished you must call createHeaders
    */
   public void addItem(LayoutElementParcelable e) {
-    if (mainFrag.IS_LIST && itemsDigested.size() > 0) {
+    // TODO: simplify if condition
+    if (mainFrag.getMainFragmentViewModel() != null
+        && mainFrag.getMainFragmentViewModel().isList()
+        && itemsDigested.size() > 0) {
       itemsDigested.add(itemsDigested.size() - 1, new ListItem(e));
-    } else if (mainFrag.IS_LIST) {
+    } else if (mainFrag.getMainFragmentViewModel() != null
+        && mainFrag.getMainFragmentViewModel().isList()) {
       itemsDigested.add(new ListItem(e));
       itemsDigested.add(new ListItem(EMPTY_LAST_ITEM));
     } else {
@@ -388,7 +410,9 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
       uris.add(e != null ? e.iconData : null);
     }
 
-    if (mainFrag.IS_LIST && itemsDigested.size() > 0) {
+    if (mainFrag.getMainFragmentViewModel() != null
+        && mainFrag.getMainFragmentViewModel().isList()
+        && itemsDigested.size() > 0) {
       itemsDigested.add(new ListItem(EMPTY_LAST_ITEM));
       uris.add(null);
     }
@@ -401,12 +425,14 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
       createHeaders(invalidate, uris);
     }
 
+    boolean isItemCircular = !isGrid;
+
     sizeProvider = new RecyclerPreloadSizeProvider(this);
-    modelProvider = new RecyclerPreloadModelProvider(mainFrag, uris);
+    modelProvider = new RecyclerPreloadModelProvider(mainFrag, uris, isItemCircular);
 
     preloader =
         new RecyclerViewPreloader<>(
-            Glide.with(mainFrag), modelProvider, sizeProvider, GlideConstants.MAX_PRELOAD_FILES);
+            GlideApp.with(mainFrag), modelProvider, sizeProvider, GlideConstants.MAX_PRELOAD_FILES);
 
     recyclerView.addOnScrollListener(preloader);
   }
@@ -469,7 +495,8 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
     switch (viewType) {
       case TYPE_HEADER_FOLDERS:
       case TYPE_HEADER_FILES:
-        if (mainFrag.IS_LIST) {
+        if (mainFrag.getMainFragmentViewModel() != null
+            && mainFrag.getMainFragmentViewModel().isList()) {
 
           view = mInflater.inflate(R.layout.list_header, parent, false);
         } else {
@@ -481,11 +508,11 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
             viewType == TYPE_HEADER_FOLDERS
                 ? SpecialViewHolder.HEADER_FOLDERS
                 : SpecialViewHolder.HEADER_FILES;
-
         return new SpecialViewHolder(context, view, utilsProvider, type);
       case TYPE_ITEM:
       case TYPE_BACK:
-        if (mainFrag.IS_LIST) {
+        if (mainFrag.getMainFragmentViewModel() != null
+            && mainFrag.getMainFragmentViewModel().isList()) {
           view = mInflater.inflate(R.layout.rowlayout, parent, false);
           sizeProvider.addView(VIEW_GENERIC, view.findViewById(R.id.generic_icon));
           sizeProvider.addView(VIEW_PICTURE, view.findViewById(R.id.picture_icon));
@@ -503,6 +530,7 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
             marginFab = (int) context.getResources().getDimension(R.dimen.fab_margin);
         view = new View(context);
         view.setMinimumHeight(totalFabHeight + marginFab);
+        view.setFocusable(true);
         return new EmptyViewHolder(view);
       default:
         throw new IllegalArgumentException("Illegal: " + viewType);
@@ -513,17 +541,14 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
   public void onBindViewHolder(final RecyclerView.ViewHolder vholder, int p) {
     if (vholder instanceof ItemViewHolder) {
       final ItemViewHolder holder = (ItemViewHolder) vholder;
-
-      boolean enableMarquee =
-          sharedPrefs.getBoolean(PreferencesConstants.PREFERENCE_ENABLE_MARQUEE_FILENAME, true);
       holder.txtTitle.setEllipsize(
           enableMarquee ? TextUtils.TruncateAt.MARQUEE : TextUtils.TruncateAt.MIDDLE);
-
       final boolean isBackButton = itemsDigested.get(p).specialType == TYPE_BACK;
       if (isBackButton) {
         holder.about.setVisibility(View.GONE);
       }
-      if (mainFrag.IS_LIST) {
+      if (mainFrag.getMainFragmentViewModel() != null
+          && mainFrag.getMainFragmentViewModel().isList()) {
         if (p == getItemCount() - 1) {
           holder.rl.setMinimumHeight((int) minRowHeight);
           if (itemsDigested.size() == (getBoolean(PREFERENCE_SHOW_GOBACK_BUTTON) ? 1 : 0))
@@ -539,13 +564,34 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
         itemsDigested.get(p).setAnimate(true);
       }
       final LayoutElementParcelable rowItem = itemsDigested.get(p).elem;
+      if (dragAndDropPreference != PreferencesConstants.PREFERENCE_DRAG_DEFAULT) {
+        holder.rl.setOnDragListener(
+            new RecyclerAdapterDragListener(this, holder, dragAndDropPreference, mainFrag));
+      }
 
-      if (mainFrag.IS_LIST) {
+      holder.rl.setOnLongClickListener(
+          p1 -> {
+            if (!isBackButton) {
+              if (dragAndDropPreference == PreferencesConstants.PREFERENCE_DRAG_DEFAULT
+                  || (dragAndDropPreference == PreferencesConstants.PREFERENCE_DRAG_TO_MOVE_COPY
+                      && itemsDigested.get(vholder.getAdapterPosition()).getChecked()
+                          != ListItem.CHECKED)) {
+                toggleChecked(
+                    vholder.getAdapterPosition(),
+                    mainFrag.getMainFragmentViewModel().isList()
+                        ? holder.checkImageView
+                        : holder.checkImageViewGrid);
+              }
+              initDragListener(p, p1, holder);
+            }
+            return true;
+          });
+      if (mainFrag.getMainFragmentViewModel().isList()) {
         // clear previously cached icon
-        Glide.with(mainFrag).clear(holder.genericIcon);
-        Glide.with(mainFrag).clear(holder.pictureIcon);
-        Glide.with(mainFrag).clear(holder.apkIcon);
-        Glide.with(mainFrag).clear(holder.rl);
+        GlideApp.with(mainFrag).clear(holder.genericIcon);
+        GlideApp.with(mainFrag).clear(holder.pictureIcon);
+        GlideApp.with(mainFrag).clear(holder.apkIcon);
+        GlideApp.with(mainFrag).clear(holder.rl);
 
         holder.rl.setOnClickListener(
             v -> {
@@ -566,16 +612,6 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
                   utilsProvider.getAppTheme(),
                   mainFrag.getResources().getDisplayMetrics()));
         }
-
-        holder.rl.setOnLongClickListener(
-            p1 -> {
-              // check if the item on which action is performed is not the first {goback} item
-              if (!isBackButton) {
-                toggleChecked(vholder.getAdapterPosition(), holder.checkImageView);
-              }
-
-              return true;
-            });
         holder.txtTitle.setText(rowItem.title);
         holder.genericText.setText("");
 
@@ -729,10 +765,10 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
       } else {
         // view is a grid view
         // clear previously cached icon
-        Glide.with(mainFrag).clear(holder.genericIcon);
-        Glide.with(mainFrag).clear(holder.iconLayout);
-        Glide.with(mainFrag).clear(holder.imageView1);
-        Glide.with(mainFrag).clear(holder.rl);
+        GlideApp.with(mainFrag).clear(holder.genericIcon);
+        GlideApp.with(mainFrag).clear(holder.iconLayout);
+        GlideApp.with(mainFrag).clear(holder.imageView1);
+        GlideApp.with(mainFrag).clear(holder.rl);
 
         holder.checkImageViewGrid.setColorFilter(accentColor);
         holder.rl.setOnClickListener(
@@ -740,20 +776,10 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
               mainFrag.onListItemClicked(
                   isBackButton, vholder.getAdapterPosition(), rowItem, holder.checkImageViewGrid);
             });
-
-        holder.rl.setOnLongClickListener(
-            p1 -> {
-              if (!isBackButton) {
-                toggleChecked(vholder.getAdapterPosition(), holder.checkImageViewGrid);
-              }
-              return true;
-            });
         holder.txtTitle.setText(rowItem.title);
         holder.imageView1.setVisibility(View.INVISIBLE);
         holder.genericIcon.setVisibility(View.VISIBLE);
         holder.checkImageViewGrid.setVisibility(View.INVISIBLE);
-
-        ((RoundedImageView) holder.genericIcon).setRelativeSize(1.25f, 1.25f);
 
         if (rowItem.filetype == Icons.IMAGE || rowItem.filetype == Icons.VIDEO) {
           if (getBoolean(PREFERENCE_SHOW_THUMB)) {
@@ -777,7 +803,7 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
             holder.genericIcon.setImageResource(R.drawable.ic_doc_apk_white);
           }
         } else {
-          Glide.with(mainFrag).load(rowItem.iconData.image).into(holder.genericIcon);
+          GlideApp.with(mainFrag).load(rowItem.iconData.image).into(holder.genericIcon);
         }
 
         if (holder.genericIcon.getVisibility() == View.VISIBLE) {
@@ -877,7 +903,8 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
 
   @Override
   public int getCorrectView(IconDataParcelable item, int adapterPosition) {
-    if (mainFrag.IS_LIST) {
+    if (mainFrag.getMainFragmentViewModel() != null
+        && mainFrag.getMainFragmentViewModel().isList()) {
       if (getBoolean(PREFERENCE_SHOW_THUMB)) {
         int filetype = itemsDigested.get(adapterPosition).elem.filetype;
 
@@ -902,6 +929,74 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
     }
   }
 
+  private void initDragListener(int position, View view, ItemViewHolder itemViewHolder) {
+    if (dragAndDropPreference != PreferencesConstants.PREFERENCE_DRAG_DEFAULT
+        && (itemsDigested.get(position).getChecked() == ListItem.CHECKED
+            || dragAndDropPreference == PreferencesConstants.PREFERENCE_DRAG_TO_SELECT)) {
+      // toggle drag flag to true for list item due to the fact
+      // that we might have set it false in a previous drag event
+      if (!itemsDigested.get(position).shouldToggleDragChecked) {
+        itemsDigested.get(position).toggleShouldToggleDragChecked();
+      }
+
+      View shadowView =
+          dragAndDropPreference == PreferencesConstants.PREFERENCE_DRAG_TO_SELECT
+              ? itemViewHolder.dummyView
+              : getDragShadow(getCheckedItems().size());
+      View.DragShadowBuilder dragShadowBuilder = new View.DragShadowBuilder(shadowView);
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        view.startDragAndDrop(null, dragShadowBuilder, null, 0);
+      } else {
+        view.startDrag(null, dragShadowBuilder, null, 0);
+      }
+      mainFrag
+          .getMainActivity()
+          .initCornersDragListener(
+              false, dragAndDropPreference != PreferencesConstants.PREFERENCE_DRAG_TO_SELECT);
+    }
+  }
+
+  private View getDragShadow(int selectionCount) {
+    mainFrag.getMainActivity().getTabFragment().getDragPlaceholder().setVisibility(View.VISIBLE);
+    String rememberMovePreference =
+        sharedPrefs.getString(PreferencesConstants.PREFERENCE_DRAG_AND_DROP_REMEMBERED, "");
+    ImageView icon =
+        mainFrag.getMainActivity().getTabFragment().getDragPlaceholder().findViewById(R.id.icon);
+    View filesCountParent =
+        mainFrag
+            .getMainActivity()
+            .getTabFragment()
+            .getDragPlaceholder()
+            .findViewById(R.id.files_count_parent);
+    TextView filesCount =
+        mainFrag
+            .getMainActivity()
+            .getTabFragment()
+            .getDragPlaceholder()
+            .findViewById(R.id.files_count);
+    icon.setImageDrawable(
+        context.getResources().getDrawable(getDragIconReference(rememberMovePreference)));
+    GradientDrawable gradientDrawable = (GradientDrawable) icon.getBackground();
+    gradientDrawable.setColor(grey_color);
+    filesCount.setText(String.valueOf(selectionCount));
+    filesCountParent.setBackgroundDrawable(
+        new CircleGradientDrawable(
+            accentColor, utilsProvider.getAppTheme(), mainFrag.getResources().getDisplayMetrics()));
+    return mainFrag.getMainActivity().getTabFragment().getDragPlaceholder();
+  }
+
+  private int getDragIconReference(String rememberMovePreference) {
+    int iconRef = R.drawable.ic_add_white_24dp;
+    if (rememberMovePreference.equalsIgnoreCase(
+        PreferencesConstants.PREFERENCE_DRAG_REMEMBER_MOVE)) {
+      iconRef = R.drawable.ic_content_cut_white_36dp;
+    } else if (rememberMovePreference.equalsIgnoreCase(
+        PreferencesConstants.PREFERENCE_DRAG_REMEMBER_COPY)) {
+      iconRef = R.drawable.ic_content_copy_white_24dp;
+    }
+    return iconRef;
+  }
+
   private void showThumbnailWithBackground(
       ItemViewHolder viewHolder,
       IconDataParcelable iconData,
@@ -909,7 +1004,9 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
       OnImageProcessed errorListener) {
     if (iconData.isImageBroken()) {
       viewHolder.genericIcon.setVisibility(View.VISIBLE);
-      Glide.with(mainFrag).load(R.drawable.ic_broken_image_white_24dp).into(viewHolder.genericIcon);
+      GlideApp.with(mainFrag)
+          .load(R.drawable.ic_broken_image_white_24dp)
+          .into(viewHolder.genericIcon);
       GradientDrawable gradientDrawable = (GradientDrawable) viewHolder.genericIcon.getBackground();
       gradientDrawable.setColor(grey_color);
 
@@ -918,7 +1015,7 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
     }
 
     viewHolder.genericIcon.setVisibility(View.VISIBLE);
-    Glide.with(mainFrag).load(iconData.loadingImage).into(viewHolder.genericIcon);
+    GlideApp.with(mainFrag).load(iconData.loadingImage).into(viewHolder.genericIcon);
     GradientDrawable gradientDrawable = (GradientDrawable) viewHolder.genericIcon.getBackground();
 
     RequestListener<Drawable> requestListener =
@@ -930,7 +1027,7 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
             new Handler(
                     msg -> {
                       viewHolder.genericIcon.setVisibility(View.VISIBLE);
-                      Glide.with(mainFrag)
+                      GlideApp.with(mainFrag)
                           .load(R.drawable.ic_broken_image_white_24dp)
                           .into(viewHolder.genericIcon);
                       return false;
@@ -976,7 +1073,9 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
 
       viewHolder.genericIcon.setVisibility(View.VISIBLE);
       iconBackground.setBackgroundColor(grey_color);
-      Glide.with(mainFrag).load(R.drawable.ic_broken_image_white_24dp).into(viewHolder.genericIcon);
+      GlideApp.with(mainFrag)
+          .load(R.drawable.ic_broken_image_white_24dp)
+          .into(viewHolder.genericIcon);
       view.setVisibility(View.INVISIBLE);
 
       errorListener.onImageProcessed(true);
@@ -987,7 +1086,7 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
         getBoolean(PREFERENCE_USE_CIRCULAR_IMAGES) ? viewHolder.genericIcon : viewHolder.iconLayout;
 
     viewHolder.genericIcon.setVisibility(View.VISIBLE);
-    Glide.with(mainFrag).load(iconData.loadingImage).into(viewHolder.genericIcon);
+    GlideApp.with(mainFrag).load(iconData.loadingImage).into(viewHolder.genericIcon);
     view.setVisibility(View.INVISIBLE);
 
     RequestListener<Drawable> requestListener =
@@ -998,7 +1097,7 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
             iconBackground.setBackgroundColor(grey_color);
             new Handler(
                     msg -> {
-                      Glide.with(mainFrag)
+                      GlideApp.with(mainFrag)
                           .load(R.drawable.ic_broken_image_white_24dp)
                           .into(viewHolder.genericIcon);
                       return false;
@@ -1057,6 +1156,7 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
           if (description.endsWith(fileExtensionZip)
               || description.endsWith(fileExtensionJar)
               || description.endsWith(fileExtensionApk)
+              || description.endsWith(fileExtensionApks)
               || description.endsWith(fileExtensionRar)
               || description.endsWith(fileExtensionTar)
               || description.endsWith(fileExtensionGzipTarLong)
@@ -1082,13 +1182,17 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
     return preferenceActivity.getBoolean(key);
   }
 
-  private static class ListItem {
+  @IntDef({TYPE_ITEM, TYPE_HEADER_FOLDERS, TYPE_HEADER_FILES, EMPTY_LAST_ITEM, TYPE_BACK})
+  public @interface ListElemType {}
+
+  public static class ListItem {
     public static final int CHECKED = 0, NOT_CHECKED = 1, UNCHECKABLE = 2;
 
     private LayoutElementParcelable elem;
     private @ListElemType int specialType;
     private boolean checked;
     private boolean animate;
+    private boolean shouldToggleDragChecked = true;
 
     ListItem(LayoutElementParcelable elem) {
       this(false, elem);
@@ -1111,6 +1215,22 @@ public class RecyclerAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolde
       if (checked) return CHECKED;
       else if (specialType == TYPE_ITEM) return NOT_CHECKED;
       else return UNCHECKABLE;
+    }
+
+    public LayoutElementParcelable getElem() {
+      return elem;
+    }
+
+    public int getSpecialType() {
+      return this.specialType;
+    }
+
+    public boolean getShouldToggleDragChecked() {
+      return !checked && this.shouldToggleDragChecked;
+    }
+
+    public void toggleShouldToggleDragChecked() {
+      this.shouldToggleDragChecked = !this.shouldToggleDragChecked;
     }
 
     public void setAnimate(boolean animating) {

@@ -29,13 +29,13 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 
 import com.amaze.filemanager.application.AppConfig;
-import com.amaze.filemanager.exceptions.ShellNotRunningException;
-import com.amaze.filemanager.exceptions.StreamNotFoundException;
+import com.amaze.filemanager.file_operations.exceptions.ShellNotRunningException;
+import com.amaze.filemanager.file_operations.exceptions.StreamNotFoundException;
 import com.amaze.filemanager.filesystem.EditableFileAbstraction;
 import com.amaze.filemanager.filesystem.HybridFileParcelable;
 import com.amaze.filemanager.filesystem.files.FileUtils;
+import com.amaze.filemanager.filesystem.root.CopyFilesCommand;
 import com.amaze.filemanager.utils.OnAsyncTaskFinished;
-import com.amaze.filemanager.utils.RootUtils;
 
 import android.content.ContentResolver;
 import android.os.AsyncTask;
@@ -51,6 +51,7 @@ public class ReadFileTask extends AsyncTask<Void, Void, ReadFileTask.ReturnedVal
   public static final int NORMAL = 0;
   public static final int EXCEPTION_STREAM_NOT_FOUND = -1;
   public static final int EXCEPTION_IO = -2;
+  public static final int EXCEPTION_OOM = -3;
 
   private ContentResolver contentResolver;
   private EditableFileAbstraction fileAbstraction;
@@ -126,6 +127,9 @@ public class ReadFileTask extends AsyncTask<Void, Void, ReadFileTask.ReturnedVal
     } catch (IOException e) {
       e.printStackTrace();
       return new ReturnedValues(EXCEPTION_IO);
+    } catch (OutOfMemoryError e) {
+      e.printStackTrace();
+      return new ReturnedValues(EXCEPTION_OOM);
     }
 
     return new ReturnedValues(stringBuilder.toString(), cachedFile);
@@ -145,7 +149,7 @@ public class ReadFileTask extends AsyncTask<Void, Void, ReadFileTask.ReturnedVal
       try {
         cachedFile = new File(externalCacheDir, file.getName());
         // creating a cache file
-        RootUtils.copy(file.getAbsolutePath(), cachedFile.getPath());
+        CopyFilesCommand.INSTANCE.copyFiles(file.getAbsolutePath(), cachedFile.getPath());
 
         inputStream = new FileInputStream(cachedFile);
       } catch (ShellNotRunningException e) {

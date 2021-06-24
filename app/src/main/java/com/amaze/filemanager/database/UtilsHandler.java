@@ -20,6 +20,8 @@
 
 package com.amaze.filemanager.database;
 
+import static com.amaze.filemanager.BuildConfig.DEBUG;
+
 import java.io.File;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
@@ -326,7 +328,9 @@ public class UtilsHandler {
             .blockingGet();
       } catch (Exception e) {
         // catch error to handle Single#onError for blockingGet
-        Log.e(getClass().getSimpleName(), e.getMessage());
+        if (DEBUG) {
+          Log.e(getClass().getSimpleName(), "Error getting public key for URI [" + uri + "]", e);
+        }
         return null;
       }
     } else {
@@ -357,7 +361,10 @@ public class UtilsHandler {
           .blockingGet();
     } catch (Exception e) {
       // catch error to handle Single#onError for blockingGet
-      Log.e(getClass().getSimpleName(), e.getMessage());
+      if (DEBUG) {
+        Log.e(
+            getClass().getSimpleName(), "Error getting auth private key for URI [" + uri + "]", e);
+      }
       return null;
     }
   }
@@ -379,12 +386,18 @@ public class UtilsHandler {
   private void removeSmbPath(String name, String path) {
     if ("".equals(path))
       utilitiesDatabase.smbEntryDao().deleteByName(name).subscribeOn(Schedulers.io()).subscribe();
-    else
+    else {
+      try {
+        path = SmbUtil.getSmbEncryptedPath(context, path);
+      } catch (GeneralSecurityException | IOException e) {
+        Log.e(TAG, "Error encrypting path", e);
+      }
       utilitiesDatabase
           .smbEntryDao()
           .deleteByNameAndPath(name, path)
           .subscribeOn(Schedulers.io())
           .subscribe();
+    }
   }
 
   private void removeSftpPath(String name, String path) {

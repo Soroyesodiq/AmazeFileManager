@@ -22,10 +22,12 @@ package com.amaze.filemanager.filesystem;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Objects;
 
 import com.amaze.filemanager.R;
 import com.amaze.filemanager.asynchronous.asynctasks.PrepareCopyTask;
 import com.amaze.filemanager.ui.activities.MainActivity;
+import com.amaze.filemanager.ui.fragments.MainFragment;
 import com.amaze.filemanager.utils.Utils;
 import com.google.android.material.snackbar.BaseTransientBottomBar;
 import com.google.android.material.snackbar.Snackbar;
@@ -68,9 +70,7 @@ public final class PasteHelper implements Parcelable {
 
   private PasteHelper(Parcel in) {
     operation = in.readInt();
-    paths =
-        (HybridFileParcelable[])
-            in.readParcelableArray(HybridFileParcelable.class.getClassLoader());
+    paths = in.createTypedArray(HybridFileParcelable.CREATOR);
   }
 
   @Override
@@ -81,7 +81,7 @@ public final class PasteHelper implements Parcelable {
   @Override
   public void writeToParcel(Parcel dest, int flags) {
     dest.writeInt(operation);
-    dest.writeParcelableArray(paths, 0);
+    dest.writeTypedArray(paths, 0);
   }
 
   public static final Parcelable.Creator CREATOR =
@@ -132,7 +132,6 @@ public final class PasteHelper implements Parcelable {
     if (shouldClearPasteData) {
       mainActivity.setPaste(null);
     }
-    Utils.invalidateFab(mainActivity, null, false);
   }
 
   private void showSnackbar() {
@@ -147,26 +146,28 @@ public final class PasteHelper implements Parcelable {
               @Override
               public void onSuccess(Spanned spanned) {
                 snackbar =
-                    Utils.showThemedSnackbar(
+                    Utils.showCutCopySnackBar(
                         mainActivity,
                         spanned,
                         BaseTransientBottomBar.LENGTH_INDEFINITE,
                         R.string.paste,
                         () -> {
-                          String path = mainActivity.getCurrentMainFragment().getCurrentPath();
+                          final MainFragment mainFragment =
+                              Objects.requireNonNull(mainActivity.getCurrentMainFragment());
+                          String path = mainFragment.getCurrentPath();
                           ArrayList<HybridFileParcelable> arrayList =
                               new ArrayList<>(Arrays.asList(paths));
                           boolean move = operation == PasteHelper.OPERATION_CUT;
                           new PrepareCopyTask(
-                                  mainActivity.getCurrentMainFragment(),
                                   path,
                                   move,
                                   mainActivity,
-                                  mainActivity.isRootExplorer())
+                                  mainActivity.isRootExplorer(),
+                                  mainFragment.getMainFragmentViewModel().getOpenMode())
                               .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, arrayList);
                           dismissSnackbar(true);
-                        });
-                Utils.invalidateFab(mainActivity, () -> dismissSnackbar(true), true);
+                        },
+                        () -> dismissSnackbar(true));
               }
 
               @Override

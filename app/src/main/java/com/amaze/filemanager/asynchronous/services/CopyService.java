@@ -29,22 +29,22 @@ import com.amaze.filemanager.asynchronous.asynctasks.DeleteTask;
 import com.amaze.filemanager.asynchronous.management.ServiceWatcherUtil;
 import com.amaze.filemanager.database.CryptHandler;
 import com.amaze.filemanager.database.models.explorer.EncryptedEntry;
-import com.amaze.filemanager.exceptions.ShellNotRunningException;
-import com.amaze.filemanager.filesystem.FileUtil;
+import com.amaze.filemanager.file_operations.exceptions.ShellNotRunningException;
+import com.amaze.filemanager.file_operations.filesystem.OpenMode;
+import com.amaze.filemanager.filesystem.FileProperties;
 import com.amaze.filemanager.filesystem.HybridFile;
 import com.amaze.filemanager.filesystem.HybridFileParcelable;
 import com.amaze.filemanager.filesystem.Operations;
-import com.amaze.filemanager.filesystem.RootHelper;
 import com.amaze.filemanager.filesystem.files.CryptUtil;
 import com.amaze.filemanager.filesystem.files.FileUtils;
 import com.amaze.filemanager.filesystem.files.GenericCopyUtil;
+import com.amaze.filemanager.filesystem.root.CopyFilesCommand;
+import com.amaze.filemanager.filesystem.root.MoveFileCommand;
 import com.amaze.filemanager.ui.activities.MainActivity;
 import com.amaze.filemanager.ui.notifications.NotificationConstants;
 import com.amaze.filemanager.utils.DatapointParcelable;
 import com.amaze.filemanager.utils.ObtainableServiceBinder;
-import com.amaze.filemanager.utils.OpenMode;
 import com.amaze.filemanager.utils.ProgressHandler;
-import com.amaze.filemanager.utils.RootUtils;
 
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -56,13 +56,13 @@ import android.content.SharedPreferences;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.IBinder;
-import android.preference.PreferenceManager;
 import android.util.Log;
 import android.widget.RemoteViews;
 import android.widget.Toast;
 
 import androidx.annotation.StringRes;
 import androidx.core.app.NotificationCompat;
+import androidx.preference.PreferenceManager;
 
 public class CopyService extends AbstractProgressiveService {
 
@@ -114,7 +114,7 @@ public class CopyService extends AbstractProgressiveService {
             .getUtilsProvider()
             .getColorPreference()
             .getCurrentUserColorPreferences(this, sharedPreferences)
-            .accent;
+            .getAccent();
 
     mNotifyManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
     b.putInt(TAG_COPY_START_ID, startId);
@@ -166,7 +166,7 @@ public class CopyService extends AbstractProgressiveService {
     new DoInBackground(isRootExplorer).execute(b);
 
     // If we get killed, after returning from here, restart
-    return START_STICKY;
+    return START_NOT_STICKY;
   }
 
   @Override
@@ -225,15 +225,14 @@ public class CopyService extends AbstractProgressiveService {
   }
 
   public void onDestroy() {
-    this.unregisterReceiver(receiver3);
+    super.onDestroy();
+    unregisterReceiver(receiver3);
   }
 
   private class DoInBackground extends AsyncTask<Bundle, Void, Void> {
-    ArrayList<HybridFileParcelable> sourceFiles;
     boolean move;
-    Copy copy;
+    private Copy copy;
     private String targetPath;
-    private OpenMode openMode;
     private boolean isRootExplorer;
     private int sourceProgress = 0;
 
@@ -243,7 +242,7 @@ public class CopyService extends AbstractProgressiveService {
 
     protected Void doInBackground(Bundle... p1) {
 
-      sourceFiles = p1[0].getParcelableArrayList(TAG_COPY_SOURCES);
+      ArrayList<HybridFileParcelable> sourceFiles = p1[0].getParcelableArrayList(TAG_COPY_SOURCES);
 
       // setting up service watchers and initial data packages
       // finding total size on background thread (this is necessary condition for SMB!)
@@ -261,7 +260,7 @@ public class CopyService extends AbstractProgressiveService {
 
       targetPath = p1[0].getString(TAG_COPY_TARGET);
       move = p1[0].getBoolean(TAG_COPY_MOVE);
-      openMode = OpenMode.getOpenMode(p1[0].getInt(TAG_COPY_OPEN_MODE));
+      OpenMode openMode = OpenMode.getOpenMode(p1[0].getInt(TAG_COPY_OPEN_MODE));
       copy = new Copy();
       copy.execute(sourceFiles, targetPath, move, openMode);
 
@@ -367,7 +366,7 @@ public class CopyService extends AbstractProgressiveService {
         // initial start of copy, initiate the watcher
         watcherUtil.watch(CopyService.this);
 
-        if (FileUtil.checkFolder((targetPath), c) == 1) {
+        if (FileProperties.checkFolder((targetPath), c) == 1) {
           for (int i = 0; i < sourceFiles.size(); i++) {
             sourceProgress = i;
             HybridFileParcelable f1 = (sourceFiles.get(i));
@@ -450,8 +449,11 @@ public class CopyService extends AbstractProgressiveService {
       void copyRoot(HybridFileParcelable sourceFile, HybridFile targetFile, boolean move) {
 
         try {
-          if (!move) RootUtils.copy(sourceFile.getPath(), targetFile.getPath());
-          else if (move) RootUtils.move(sourceFile.getPath(), targetFile.getPath());
+          if (!move) {
+            CopyFilesCommand.INSTANCE.copyFiles(sourceFile.getPath(), targetFile.getPath());
+          } else if (move) {
+            MoveFileCommand.INSTANCE.moveFile(sourceFile.getPath(), targetFile.getPath());
+          }
           ServiceWatcherUtil.position += sourceFile.getSize();
         } catch (ShellNotRunningException e) {
           e.printStackTrace();
@@ -507,56 +509,16 @@ public class CopyService extends AbstractProgressiveService {
           GenericCopyUtil copyUtil = new GenericCopyUtil(c, progressHandler);
 
           progressHandler.setFileName(sourceFile.getName(c));
-          copyUtil.copy(sourceFile, targetFile);
+          copyUtil.copy(
+              sourceFile,
+              targetFile,
+              () -> {
+                // we ran out of memory to map the whole channel, let's switch to streams
+                AppConfig.toast(c, c.getString(R.string.copy_low_memory));
+              },
+              ServiceWatcherUtil.UPDATE_POSITION);
         }
       }
-    }
-  }
-
-  // check if copy is successful
-  // avoid using the method as there is no way to know when we would be returning from command
-  // callbacks
-  // rather confirm from the command result itself, inside it's callback
-  boolean checkFiles(HybridFile hFile1, HybridFile hFile2) throws ShellNotRunningException {
-    if (RootHelper.isDirectory(hFile1.getPath(), isRootExplorer, 5)) {
-      if (RootHelper.fileExists(hFile2.getPath())) return false;
-      ArrayList<HybridFileParcelable> baseFiles =
-          RootHelper.getFilesList(hFile1.getPath(), true, true, null);
-      if (baseFiles.size() > 0) {
-        boolean b = true;
-        for (HybridFileParcelable baseFile : baseFiles) {
-          if (!checkFiles(
-              new HybridFile(baseFile.getMode(), baseFile.getPath()),
-              new HybridFile(hFile2.getMode(), hFile2.getPath() + "/" + (baseFile.getName(c)))))
-            b = false;
-        }
-        return b;
-      }
-      return RootHelper.fileExists(hFile2.getPath());
-    } else {
-      ArrayList<HybridFileParcelable> baseFiles =
-          RootHelper.getFilesList(hFile1.getParent(c), true, true, null);
-      int i = -1;
-      int index = -1;
-      for (HybridFileParcelable b : baseFiles) {
-        i++;
-        if (b.getPath().equals(hFile1.getPath())) {
-          index = i;
-          break;
-        }
-      }
-      ArrayList<HybridFileParcelable> baseFiles1 =
-          RootHelper.getFilesList(hFile1.getParent(c), true, true, null);
-      int i1 = -1;
-      int index1 = -1;
-      for (HybridFileParcelable b : baseFiles1) {
-        i1++;
-        if (b.getPath().equals(hFile1.getPath())) {
-          index1 = i1;
-          break;
-        }
-      }
-      return baseFiles.get(index).getSize() == baseFiles1.get(index1).getSize();
     }
   }
 

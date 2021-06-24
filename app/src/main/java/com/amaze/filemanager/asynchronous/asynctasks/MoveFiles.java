@@ -21,7 +21,6 @@
 package com.amaze.filemanager.asynchronous.asynctasks;
 
 import java.io.File;
-import java.net.MalformedURLException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -32,18 +31,17 @@ import com.amaze.filemanager.asynchronous.management.ServiceWatcherUtil;
 import com.amaze.filemanager.asynchronous.services.CopyService;
 import com.amaze.filemanager.database.CryptHandler;
 import com.amaze.filemanager.database.models.explorer.EncryptedEntry;
-import com.amaze.filemanager.exceptions.ShellNotRunningException;
+import com.amaze.filemanager.file_operations.exceptions.ShellNotRunningException;
+import com.amaze.filemanager.file_operations.filesystem.OpenMode;
 import com.amaze.filemanager.filesystem.HybridFile;
 import com.amaze.filemanager.filesystem.HybridFileParcelable;
 import com.amaze.filemanager.filesystem.Operations;
 import com.amaze.filemanager.filesystem.cloud.CloudUtil;
 import com.amaze.filemanager.filesystem.files.CryptUtil;
 import com.amaze.filemanager.filesystem.files.FileUtils;
+import com.amaze.filemanager.filesystem.root.RenameFileCommand;
 import com.amaze.filemanager.ui.activities.MainActivity;
-import com.amaze.filemanager.ui.fragments.MainFragment;
 import com.amaze.filemanager.utils.DataUtils;
-import com.amaze.filemanager.utils.OpenMode;
-import com.amaze.filemanager.utils.RootUtils;
 import com.cloudrail.si.interfaces.CloudStorage;
 
 import android.content.Context;
@@ -51,9 +49,6 @@ import android.content.Intent;
 import android.os.AsyncTask;
 import android.util.Log;
 import android.widget.Toast;
-
-import jcifs.smb.SmbException;
-import jcifs.smb.SmbFile;
 
 /**
  * AsyncTask that moves files from source to destination by trying to rename files first, if they're
@@ -63,23 +58,26 @@ import jcifs.smb.SmbFile;
 public class MoveFiles extends AsyncTask<ArrayList<String>, String, Boolean> {
 
   private ArrayList<ArrayList<HybridFileParcelable>> files;
-  private MainFragment mainFrag;
   private ArrayList<String> paths;
   private Context context;
   private OpenMode mode;
   private long totalBytes = 0l;
   private long destinationSize = 0l;
   private boolean invalidOperation = false;
+  private boolean isRootExplorer;
+  private String currentPath;
 
   public MoveFiles(
       ArrayList<ArrayList<HybridFileParcelable>> files,
-      MainFragment ma,
+      boolean isRootExplorer,
+      String currentPath,
       Context context,
       OpenMode mode) {
-    mainFrag = ma;
     this.context = context;
     this.files = files;
     this.mode = mode;
+    this.isRootExplorer = isRootExplorer;
+    this.currentPath = currentPath;
   }
 
   @Override
@@ -97,6 +95,8 @@ public class MoveFiles extends AsyncTask<ArrayList<String>, String, Boolean> {
     for (int i = 0; i < paths.size(); i++) {
       for (HybridFileParcelable baseFile : files.get(i)) {
         String destPath = paths.get(i) + "/" + baseFile.getName(context);
+        if (baseFile.getPath().indexOf('?') > 0)
+          destPath += baseFile.getPath().substring(baseFile.getPath().indexOf('?'));
         if (!isMoveOperationValid(baseFile, new HybridFile(mode, paths.get(i)))) {
           // TODO: 30/06/20 Replace runtime exception with generic exception
           Log.w(
@@ -105,28 +105,16 @@ public class MoveFiles extends AsyncTask<ArrayList<String>, String, Boolean> {
           continue;
         }
         switch (mode) {
-          case SMB:
-            try {
-              SmbFile source = new SmbFile(baseFile.getPath());
-              SmbFile dest = new SmbFile(destPath);
-              source.renameTo(dest);
-            } catch (MalformedURLException e) {
-              e.printStackTrace();
-              return false;
-            } catch (SmbException e) {
-              e.printStackTrace();
-              return false;
-            }
-            break;
           case FILE:
             File dest = new File(destPath);
             File source = new File(baseFile.getPath());
             if (!source.renameTo(dest)) {
 
               // check if we have root
-              if (mainFrag != null && mainFrag.getMainActivity().isRootExplorer()) {
+              if (isRootExplorer) {
                 try {
-                  if (!RootUtils.rename(baseFile.getPath(), destPath)) return false;
+                  if (!RenameFileCommand.INSTANCE.renameFile(baseFile.getPath(), destPath))
+                    return false;
                 } catch (ShellNotRunningException e) {
                   e.printStackTrace();
                   return false;
@@ -149,6 +137,7 @@ public class MoveFiles extends AsyncTask<ArrayList<String>, String, Boolean> {
                     CloudUtil.stripPath(mode, baseFile.getPath()),
                     CloudUtil.stripPath(mode, destPath));
               } catch (Exception e) {
+                e.printStackTrace();
                 return false;
               }
             } else {
@@ -166,7 +155,7 @@ public class MoveFiles extends AsyncTask<ArrayList<String>, String, Boolean> {
   @Override
   public void onPostExecute(Boolean movedCorrectly) {
     if (movedCorrectly) {
-      if (mainFrag != null && mainFrag.getCurrentPath().equals(paths.get(0))) {
+      if (currentPath.equals(paths.get(0))) {
         // mainFrag.updateList();
         Intent intent = new Intent(MainActivity.KEY_INTENT_LOAD_LIST);
 
@@ -233,8 +222,7 @@ public class MoveFiles extends AsyncTask<ArrayList<String>, String, Boolean> {
         intent.putExtra(CopyService.TAG_COPY_TARGET, paths.get(i));
         intent.putExtra(CopyService.TAG_COPY_MOVE, true);
         intent.putExtra(CopyService.TAG_COPY_OPEN_MODE, mode.ordinal());
-        intent.putExtra(
-            CopyService.TAG_IS_ROOT_EXPLORER, mainFrag.getMainActivity().isRootExplorer());
+        intent.putExtra(CopyService.TAG_IS_ROOT_EXPLORER, isRootExplorer);
 
         ServiceWatcherUtil.runService(context, intent);
       }

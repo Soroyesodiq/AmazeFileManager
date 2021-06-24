@@ -20,6 +20,9 @@
 
 package com.amaze.filemanager.filesystem.ssh;
 
+import static android.os.Build.VERSION_CODES.JELLY_BEAN;
+import static android.os.Build.VERSION_CODES.KITKAT;
+import static android.os.Build.VERSION_CODES.P;
 import static com.amaze.filemanager.filesystem.ssh.test.TestUtils.saveSshConnectionSettings;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -43,6 +46,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowSQLiteConnection;
 
 import com.amaze.filemanager.filesystem.ssh.test.TestUtils;
 import com.amaze.filemanager.shadows.ShadowMultiDex;
@@ -53,6 +57,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
+import io.reactivex.android.plugins.RxAndroidPlugins;
 import io.reactivex.plugins.RxJavaPlugins;
 import io.reactivex.schedulers.Schedulers;
 import net.schmizz.sshj.SSHClient;
@@ -62,7 +67,9 @@ import net.schmizz.sshj.userauth.UserAuthException;
 import net.schmizz.sshj.userauth.keyprovider.KeyProvider;
 
 @RunWith(AndroidJUnit4.class)
-@Config(shadows = {ShadowMultiDex.class, ShadowCryptUtil.class})
+@Config(
+    shadows = {ShadowMultiDex.class, ShadowCryptUtil.class},
+    sdk = {JELLY_BEAN, KITKAT, P})
 public class SshConnectionPoolTest {
 
   private static KeyPair hostKeyPair;
@@ -108,34 +115,35 @@ public class SshConnectionPoolTest {
         };
     RxJavaPlugins.reset();
     RxJavaPlugins.setIoSchedulerHandler(scheduler -> Schedulers.trampoline());
+    RxAndroidPlugins.reset();
+    RxAndroidPlugins.setInitMainThreadSchedulerHandler(scheduler -> Schedulers.trampoline());
   }
 
   @After
   public void tearDown() {
-    SshConnectionPool.getInstance().shutdown();
+    SshConnectionPool.INSTANCE.shutdown();
+    ShadowSQLiteConnection.reset();
   }
 
   @Test
   public void testGetConnectionWithUsernameAndPassword() throws IOException {
     SSHClient mock = createSshServer("testuser", "testpassword");
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection(
-                "127.0.0.1",
-                22222,
-                SecurityUtils.getFingerprint(hostKeyPair.getPublic()),
-                "testuser",
-                "testpassword",
-                null));
+        SshConnectionPool.INSTANCE.getConnection(
+            "127.0.0.1",
+            22222,
+            SecurityUtils.getFingerprint(hostKeyPair.getPublic()),
+            "testuser",
+            "testpassword",
+            null));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection(
-                "127.0.0.1",
-                22222,
-                SecurityUtils.getFingerprint(hostKeyPair.getPublic()),
-                "invaliduser",
-                "invalidpassword",
-                null));
+        SshConnectionPool.INSTANCE.getConnection(
+            "127.0.0.1",
+            22222,
+            SecurityUtils.getFingerprint(hostKeyPair.getPublic()),
+            "invaliduser",
+            "invalidpassword",
+            null));
 
     verify(mock, times(2))
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -148,24 +156,22 @@ public class SshConnectionPoolTest {
   public void testGetConnectionWithUsernameAndKey() throws IOException {
     SSHClient mock = createSshServer("testuser", null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection(
-                "127.0.0.1",
-                22222,
-                SecurityUtils.getFingerprint(hostKeyPair.getPublic()),
-                "testuser",
-                null,
-                userKeyPair));
-    SshConnectionPool.getInstance().shutdown();
+        SshConnectionPool.INSTANCE.getConnection(
+            "127.0.0.1",
+            22222,
+            SecurityUtils.getFingerprint(hostKeyPair.getPublic()),
+            "testuser",
+            null,
+            userKeyPair));
+    SshConnectionPool.INSTANCE.shutdown();
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection(
-                "127.0.0.1",
-                22222,
-                SecurityUtils.getFingerprint(hostKeyPair.getPublic()),
-                "invaliduser",
-                null,
-                userKeyPair));
+        SshConnectionPool.INSTANCE.getConnection(
+            "127.0.0.1",
+            22222,
+            SecurityUtils.getFingerprint(hostKeyPair.getPublic()),
+            "invaliduser",
+            null,
+            userKeyPair));
 
     verify(mock, times(2))
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -180,11 +186,10 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer("testuser", validPassword);
     saveSshConnectionSettings(hostKeyPair, "testuser", validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://testuser:testpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection("ssh://testuser:testpassword@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -199,8 +204,8 @@ public class SshConnectionPoolTest {
   public void testGetConnectionWithUrlAndKeyAuth() throws IOException {
     SSHClient mock = createSshServer("testuser", null);
     saveSshConnectionSettings(hostKeyPair, "testuser", null, userKeyPair.getPrivate());
-    assertNotNull(SshConnectionPool.getInstance().getConnection("ssh://testuser@127.0.0.1:22222"));
-    assertNull(SshConnectionPool.getInstance().getConnection("ssh://invaliduser@127.0.0.1:22222"));
+    assertNotNull(SshConnectionPool.INSTANCE.getConnection("ssh://testuser@127.0.0.1:22222"));
+    assertNull(SshConnectionPool.INSTANCE.getConnection("ssh://invaliduser@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -218,11 +223,10 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer("testuser", validPassword);
     saveSshConnectionSettings(hostKeyPair, "testuser", validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://testuser:testP@ssw0rd@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection("ssh://testuser:testP@ssw0rd@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -240,11 +244,10 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer("testuser", validPassword);
     saveSshConnectionSettings(hostKeyPair, "testuser", validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://testuser:testP@##word@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection("ssh://testuser:testP@##word@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -262,11 +265,10 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer("testuser", validPassword);
     saveSshConnectionSettings(hostKeyPair, "testuser", validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://testuser:testP@##word@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection("ssh://testuser:testP@##word@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -284,11 +286,10 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer("testuser", validPassword);
     saveSshConnectionSettings(hostKeyPair, "testuser", validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://testuser:testP@##word@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection("ssh://testuser:testP@##word@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -307,11 +308,11 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer(validUsername, validPassword);
     saveSshConnectionSettings(hostKeyPair, validUsername, validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://test@example.com:testP@ssw0rd@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://test@example.com:testP@ssw0rd@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -330,11 +331,11 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer(validUsername, validPassword);
     saveSshConnectionSettings(hostKeyPair, validUsername, validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://test@example.com:testP@ssw0##$@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://test@example.com:testP@ssw0##$@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -353,11 +354,11 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer(validUsername, validPassword);
     saveSshConnectionSettings(hostKeyPair, validUsername, validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://test@example.com:abcd-efgh@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://test@example.com:abcd-efgh@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -376,11 +377,11 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer(validUsername, validPassword);
     saveSshConnectionSettings(hostKeyPair, validUsername, validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://test@example.com:---------------@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://test@example.com:---------------@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -399,11 +400,11 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer(validUsername, validPassword);
     saveSshConnectionSettings(hostKeyPair, validUsername, validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://test@example.com:--agdiuhdpost15@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://test@example.com:--agdiuhdpost15@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -422,11 +423,11 @@ public class SshConnectionPoolTest {
     SSHClient mock = createSshServer(validUsername, validPassword);
     saveSshConnectionSettings(hostKeyPair, validUsername, validPassword, null);
     assertNotNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://test@example.com:t-h-i-s-i-s-p-a-s-s-w-o-r-d-@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://test@example.com:t-h-i-s-i-s-p-a-s-s-w-o-r-d-@127.0.0.1:22222"));
     assertNull(
-        SshConnectionPool.getInstance()
-            .getConnection("ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
+        SshConnectionPool.INSTANCE.getConnection(
+            "ssh://invaliduser:invalidpassword@127.0.0.1:22222"));
 
     verify(mock, atLeastOnce())
         .addHostKeyVerifier(SecurityUtils.getFingerprint(hostKeyPair.getPublic()));
@@ -459,7 +460,7 @@ public class SshConnectionPoolTest {
           .authPublickey(not(eq(validUsername)), eq(sshKeyProvider));
     }
     // reset(mock);
-    SshConnectionPool.setSSHClientFactory(config -> mock);
+    SshConnectionPool.sshClientFactory = config -> mock;
     return mock;
   }
 }

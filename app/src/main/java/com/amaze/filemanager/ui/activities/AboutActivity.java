@@ -22,6 +22,7 @@ package com.amaze.filemanager.ui.activities;
 
 import static com.amaze.filemanager.utils.Utils.openURL;
 
+import com.amaze.filemanager.LogHelper;
 import com.amaze.filemanager.R;
 import com.amaze.filemanager.ui.activities.superclasses.BasicActivity;
 import com.amaze.filemanager.ui.theme.AppTheme;
@@ -36,8 +37,8 @@ import com.mikepenz.aboutlibraries.LibsBuilder;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.os.Build;
 import android.os.Bundle;
-import android.preference.PreferenceManager;
 import android.util.Log;
 import android.view.MenuItem;
 import android.view.View;
@@ -47,6 +48,7 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.widget.Toolbar;
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
 import androidx.palette.graphics.Palette;
+import androidx.preference.PreferenceManager;
 
 /** Created by vishal on 27/7/16. */
 public class AboutActivity extends BasicActivity implements View.OnClickListener {
@@ -126,12 +128,19 @@ public class AboutActivity extends BasicActivity implements View.OnClickListener
                       Utils.getColor(AboutActivity.this, R.color.primary_blue));
               mCollapsingToolbarLayout.setContentScrimColor(mutedColor);
               mCollapsingToolbarLayout.setStatusBarScrimColor(darkMutedColor);
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                getWindow().setStatusBarColor(darkMutedColor);
+              }
             });
 
     mAppBarLayout.addOnOffsetChangedListener(
         (appBarLayout, verticalOffset) -> {
           mTitleTextView.setAlpha(
               Math.abs(verticalOffset / (float) appBarLayout.getTotalScrollRange()));
+        });
+    mAppBarLayout.setOnFocusChangeListener(
+        (v, hasFocus) -> {
+          mAppBarLayout.setExpanded(hasFocus, true);
         });
   }
 
@@ -216,8 +225,7 @@ public class AboutActivity extends BasicActivity implements View.OnClickListener
       case R.id.relative_layout_licenses:
         LibsBuilder libsBuilder =
             new LibsBuilder()
-                .withLibraries(
-                    "commonscompress", "apachemina", "volley") // Not autodetected for some reason
+                .withLibraries("apachemina") // Not auto-detected for some reason
                 .withActivityTitle(getString(R.string.libraries))
                 .withAboutIconShown(true)
                 .withAboutVersionShownName(true)
@@ -237,6 +245,8 @@ public class AboutActivity extends BasicActivity implements View.OnClickListener
           case BLACK:
             libsBuilder.withActivityTheme(R.style.AboutLibrariesTheme_Black);
             break;
+          default:
+            LogHelper.logOnProductionOrCrash(TAG, "Incorrect value for switch");
         }
 
         libsBuilder.start(this);
